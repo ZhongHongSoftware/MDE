@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+MengXiOS Desktop Environment - Settings Tool
+Developer: ZhongHongSoftware, Zeta
+Email: 3380089537@qq.com
+
+现代化 TUI 设置工具，支持：
+- 显示器配置
+- 网络管理
+- 音频设置
+- 外观主题
+- 壁纸设置
+- 系统更新
+- 电源管理
+"""
+
+import os
+import sys
+import subprocess
+from typing import List, Tuple
+
+try:
+    import urwid
+except ImportError:
+    print("错误: 需要安装 urwid")
+    print("  Arch: sudo pacman -S python-urwid")
+    print("  Debian: sudo apt install python3-urwid")
+    sys.exit(1)
+
+# ============================================================================
+# 全局配置
+# ============================================================================
+
+VERSION = "3.0.0"
+TITLE = "MengXiOS Desktop Environment - Settings"
+
+# ============================================================================
+# 工具函数
+# ============================================================================
+
+def run_command(cmd: str) -> Tuple[int, str, str]:
+    """运行命令并返回结果"""
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", "命令超时"
+    except Exception as e:
+        return -1, "", str(e)
+
+def show_message(loop, parent, title: str, message: str):
+    """显示消息对话框"""
+    text = urwid.Text(message, align='center')
+    filler = urwid.Filler(text, valign='middle')
+    padding = urwid.Padding(filler, left=2, right=2)
+    linebox = urwid.LineBox(padding, title=title)
+    
+    overlay = urwid.Overlay(
+        linebox,
+        parent,
+        align='center',
+        width=('relative', 60),
+        valign='middle',
+        height=('relative', 30)
+    )
+    
+    def close_dialog(key):
+        if key in ('enter', 'esc', 'q'):
+            loop.widget = parent
+            return True
+    
+    loop.widget = overlay
+    loop.unhandled_input = close_dialog
+
+# ============================================================================
+# 设置模块
+# ============================================================================
+
+class DisplaySettings:
+    """显示器设置"""
+    
+    @staticmethod
+    def get_monitors():
+        """获取显示器列表"""
+        code, out, err = run_command("xrandr --query | grep ' connected' | cut -d' ' -f1")
+        if code == 0:
+            return out.strip().split('\n')
+        return []
+    
+    @staticmethod
+    def apply_resolution(monitor: str, resolution: str):
+        """应用分辨率"""
+        cmd = f"xrandr --output {monitor} --mode {resolution}"
+        return run_command(cmd)
+
+class NetworkSettings:
+    """网络设置"""
+    
+    @staticmethod
+    def get_connections():
+        """获取网络连接"""
+        code, out, err = run_command("nmcli connection show")
+        if code == 0:
+            lines = out.strip().split('\n')[1:]  # 跳过标题
+            return [line.split()[0] for line in lines if line]
+        return []
+
+class AudioSettings:
+    """音频设置"""
+    
+    @staticmethod
+    def get_volume():
+        """获取音量"""
+        code, out, err = run_command("pactl get-sink-volume @DEFAULT_SINK@ | grep -oP '\\d+%' | head -1")
+        if code == 0:
+            return out.strip()
+        return "N/A"
+    
+    @staticmethod
+    def set_volume(volume: int):
+        """设置音量"""
+        return run_command(f"pactl set-sink-volume @DEFAULT_SINK@ {volume}%")
+
+class WallpaperSettings:
+    """壁纸设置"""
+    
+    @staticmethod
+    def set_wallpaper(path: str):
+        """设置壁纸"""
+        return run_command(f"feh --bg-fill '{path}'")
+    
+    @staticmethod
+    def get_wallpapers():
+        """获取壁纸列表"""
+        dirs = [
+            os.path.expanduser("~/Pictures"),
+            "/usr/share/mde/wallpapers",
+            os.path.expanduser("~/.config/mde/wallpapers"),
+        ]
+        
+        wallpapers = []
+        for dir_path in dirs:
+            if os.path.isdir(dir_path):
+                for file in os.listdir(dir_path):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        wallpapers.append(os.path.join(dir_path, file))
+        
+        return wallpapers
+
+class SystemUpdate:
+    """系统更新"""
+    
+    @staticmethod
+    def detect_distro():
+        """检测发行版"""
+        if os.path.exists("/etc/arch-release"):
+            return "arch"
+        elif os.path.exists("/etc/debian_version"):
+            return "debian"
+        return "unknown"
+    
+    @staticmethod
+    def check_updates():
+        """检查更新"""
+        distro = SystemUpdate.detect_distro()
+        
+        if distro == "arch":
+            code, out, err = run_command("checkupdates | wc -l")
+            if code == 0:
+                return f"{out.strip()} 个更新可用"
+        elif distro == "debian":
+            code, out, err = run_command("apt list --upgradable 2>/dev/null | wc -l")
+            if code == 0:
+                count = int(out.strip()) - 1  # 减去标题行
+                return f"{count} 个更新可用"
+        
+        return "无法检查更新"
+    
+    @staticmethod
+    def update_system():
+        """更新系统"""
+        distro = SystemUpdate.detect_distro()
+        
+        if distro == "arch":
+            return run_command("sudo pacman -Syu --noconfirm")
+        elif distro == "debian":
+            return run_command("sudo apt update && sudo apt upgrade -y")
+        
+        return -1, "", "不支持的发行版"
+
+# ============================================================================
+# UI 组件
+# ============================================================================
+
+class MenuButton(urwid.Button):
+    """菜单按钮"""
+    
+    def __init__(self, caption, callback):
+        super().__init__("")
+        urwid.connect_signal(self, 'click', callback)
+        self._w = urwid.AttrMap(
+            urwid.SelectableIcon(f" ▸ {caption}", 0),
+            None,
+            focus_map='reversed'
+        )
+
+class SettingsApp:
+    """设置应用主类"""
+    
+    def __init__(self):
+        self.loop = None
+        self.main_menu = self.create_main_menu()
+    
+    def create_main_menu(self):
+        """创建主菜单"""
+        body = [
+            urwid.Text(('banner', f"\n{TITLE}\n"), align='center'),
+            urwid.Divider(),
+            urwid.Text(f"版本: {VERSION}\n", align='center'),
+            urwid.Divider(),
+            MenuButton("显示器设置", self.show_display_settings),
+            urwid.Divider(),
+            MenuButton("网络设置", self.show_network_settings),
+            urwid.Divider(),
+            MenuButton("音频设置", self.show_audio_settings),
+            urwid.Divider(),
+            MenuButton("壁纸设置", self.show_wallpaper_settings),
+            urwid.Divider(),
+            MenuButton("系统更新", self.show_system_update),
+            urwid.Divider(),
+            MenuButton("关于", self.show_about),
+            urwid.Divider(),
+            MenuButton("退出", self.exit_app),
+        ]
+        
+        listbox = urwid.ListBox(urwid.SimpleFocusListWalker(body))
+        return urwid.LineBox(listbox, title="主菜单")
+    
+    def show_display_settings(self, button):
+        """显示显示器设置"""
+        monitors = DisplaySettings.get_monitors()
+        msg = "检测到的显示器:\n\n" + "\n".join(f"  • {m}" for m in monitors)
+        show_message(self.loop, self.main_menu, "显示器设置", msg)
+    
+    def show_network_settings(self, button):
+        """显示网络设置"""
+        connections = NetworkSettings.get_connections()
+        if connections:
+            msg = "网络连接:\n\n" + "\n".join(f"  • {c}" for c in connections)
+        else:
+            msg = "未找到网络连接"
+        show_message(self.loop, self.main_menu, "网络设置", msg)
+    
+    def show_audio_settings(self, button):
+        """显示音频设置"""
+        volume = AudioSettings.get_volume()
+        msg = f"当前音量: {volume}\n\n使用 pavucontrol 进行详细设置"
+        show_message(self.loop, self.main_menu, "音频设置", msg)
+    
+    def show_wallpaper_settings(self, button):
+        """显示壁纸设置"""
+        wallpapers = WallpaperSettings.get_wallpapers()
+        if wallpapers:
+            msg = f"找到 {len(wallpapers)} 张壁纸\n\n" + "\n".join(wallpapers[:5])
+            if len(wallpapers) > 5:
+                msg += f"\n\n... 还有 {len(wallpapers) - 5} 张"
+        else:
+            msg = "未找到壁纸"
+        show_message(self.loop, self.main_menu, "壁纸设置", msg)
+    
+    def show_system_update(self, button):
+        """显示系统更新"""
+        msg = "检查更新中...\n\n" + SystemUpdate.check_updates()
+        show_message(self.loop, self.main_menu, "系统更新", msg)
+    
+    def show_about(self, button):
+        """显示关于"""
+        msg = (
+            f"MengXiOS Desktop Environment\n\n"
+            f"版本: {VERSION}\n\n"
+            f"开发者: ZhongHongSoftware, Zeta\n"
+            f"邮箱: 3380089537@qq.com\n\n"
+            f"基于: XXiaoA/dotfiles\n"
+        )
+        show_message(self.loop, self.main_menu, "关于", msg)
+    
+    def exit_app(self, button):
+        """退出应用"""
+        raise urwid.ExitMainLoop()
+    
+    def run(self):
+        """运行应用"""
+        palette = [
+            ('banner', 'black', 'light gray'),
+            ('reversed', 'standout', ''),
+        ]
+        
+        self.loop = urwid.MainLoop(
+            self.main_menu,
+            palette,
+            unhandled_input=self.handle_input
+        )
+        
+        self.loop.run()
+    
+    def handle_input(self, key):
+        """处理输入"""
+        if key in ('q', 'Q'):
+            raise urwid.ExitMainLoop()
+
+# ============================================================================
+# 主函数
+# ============================================================================
+
+def main():
+    """主函数"""
+    try:
+        app = SettingsApp()
+        app.run()
+    except KeyboardInterrupt:
+        print("\n已取消")
+        sys.exit(0)
+    except Exception as e:
+        print(f"错误: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

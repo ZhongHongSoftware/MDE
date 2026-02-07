@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=MengXiOS Desktop Environment
+Comment=A beautiful and modern desktop environment based on bspwm
+Exec=/usr/bin/mde-session
+Type=Application
+DesktopNames=MengXiOS
+X-Ubuntu-Gettext-Domain=mengxios

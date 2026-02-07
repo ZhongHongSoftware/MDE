@@ -1,0 +1,224 @@
+#!/bin/bash
+# MengXiOS Desktop Environment - bspwm Configuration
+# Developer: ZhongHongSoftware, Zeta
+# Email: 3380089537@qq.com
+# Based on: XXiaoA/dotfiles
+#
+# 优化版本：移除所有可能导致卡死的命令
+
+export SXHKD_SHELL=/usr/bin/bash
+
+# ============================================================================
+# 日志配置
+# ============================================================================
+
+LOG_DIR="$HOME/.local/share/mde/logs"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+LOG_FILE="$LOG_DIR/bspwm-$(date +%Y%m%d-%H%M%S).log"
+LATEST_LOG="$LOG_DIR/bspwm-latest.log"
+ln -sf "$LOG_FILE" "$LATEST_LOG" 2>/dev/null || true
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE" 2>/dev/null || echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+log "========================================="
+log "bspwm 配置启动"
+log "========================================="
+
+# DPI 和壁纸已在 mde-session 中设置，这里不需要重复设置
+log "DPI 和环境变量已在 session 中设置"
+
+# ============================================================================
+# 启动 sxhkd（快捷键守护进程）
+# ============================================================================
+
+log "启动 sxhkd..."
+
+# 停止旧进程
+killall -q sxhkd 2>/dev/null || true
+
+# 确保配置文件存在
+if [ ! -f "$HOME/.config/sxhkd/sxhkdrc" ]; then
+    if [ -f "/usr/share/mde/config/sxhkd/sxhkdrc" ]; then
+        mkdir -p "$HOME/.config/sxhkd"
+        cp "/usr/share/mde/config/sxhkd/sxhkdrc" "$HOME/.config/sxhkd/sxhkdrc"
+    fi
+fi
+
+# 启动 sxhkd（后台运行，不阻塞）
+sxhkd &
+log "✓ sxhkd 已启动"
+
+# ============================================================================
+# 多显示器配置
+# ============================================================================
+
+log "配置显示器和工作区..."
+
+# 检测显示器
+MONITORS=($(xrandr --query 2>/dev/null | grep " connected" | cut -d" " -f1))
+MONITOR_COUNT=${#MONITORS[@]}
+
+if [ $MONITOR_COUNT -eq 0 ]; then
+    # 没有检测到显示器，使用默认配置
+    bspc monitor -d 1 2 3 4 5 6 7 8 9 10
+    log "使用默认工作区配置"
+elif [ $MONITOR_COUNT -eq 1 ]; then
+    # 单显示器
+    bspc monitor "${MONITORS[0]}" -d 1 2 3 4 5 6 7 8 9 10
+    log "单显示器模式: ${MONITORS[0]}"
+else
+    # 多显示器
+    bspc monitor "${MONITORS[0]}" -d 1 2 3 4 5
+    bspc monitor "${MONITORS[1]}" -d 6 7 8 9 10
+    log "多显示器模式: ${MONITORS[*]}"
+fi
+
+# ============================================================================
+# 窗口外观配置
+# ============================================================================
+
+log "配置窗口外观..."
+
+bspc config border_width         3
+bspc config focused_border_color "#56949f"
+bspc config normal_border_color  "#908caa"
+bspc config window_gap           4
+bspc config top_padding          53
+
+bspc config split_ratio          0.52
+bspc config borderless_monocle   true
+bspc config gapless_monocle      true
+
+bspc config pointer_follows_focus false
+bspc config focus_follows_pointer false
+
+log "窗口外观配置完成"
+
+# ============================================================================
+# 外部规则
+# ============================================================================
+
+if [ -f "$HOME/.config/bspwm/rules" ]; then
+    bspc config external_rules_command "$HOME/.config/bspwm/rules"
+fi
+
+# ============================================================================
+# 窗口规则
+# ============================================================================
+
+log "配置窗口规则..."
+
+bspc rule -a Screenkey manage=off
+bspc rule -a vlc state=floating
+bspc rule -a mpv state=floating
+bspc rule -a feh state=floating center=true
+bspc rule -a imv state=floating center=true
+bspc rule -a Sxiv state=floating center=true
+bspc rule -a SimpleScreenRecorder state=floating
+bspc rule -a Pavucontrol state=floating
+bspc rule -a Nm-connection-editor state=floating
+
+log "窗口规则配置完成"
+
+# 壁纸和光标已在 mde-session 中设置
+log "壁纸和光标已在 session 中设置"
+
+# ============================================================================
+# 启动守护进程（全部异步，不阻塞）
+# ============================================================================
+
+log "启动守护进程..."
+
+# 通知守护进程
+(killall -q dunst 2>/dev/null; sleep 0.1; dunst 2>/dev/null) &
+
+# 合成器（picom）- 使用超时防止卡死
+(
+    killall -q picom 2>/dev/null
+    sleep 0.1
+    
+    # 虚拟机优化：使用 --backend xrender 避免 OpenGL 问题
+    if [ -f "$HOME/.config/picom/picom.conf" ]; then
+        timeout 5 picom --backend xrender --config "$HOME/.config/picom/picom.conf" 2>/dev/null || \
+        picom --backend xrender 2>/dev/null &
+    else
+        picom --backend xrender 2>/dev/null &
+    fi
+) &
+
+# 输入法
+(killall -q fcitx5 2>/dev/null; sleep 0.1; fcitx5 2>/dev/null) &
+
+# 自动挂载
+(killall -q udiskie 2>/dev/null; sleep 0.1; udiskie -t 2>/dev/null) &
+
+# Polkit 认证代理
+(
+    if [ -f /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 ]; then
+        /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 2>/dev/null &
+    fi
+) &
+
+# 网络管理器小程序
+(killall -q nm-applet 2>/dev/null; sleep 0.1; nm-applet 2>/dev/null) &
+
+log "守护进程已启动"
+
+# ============================================================================
+# 启动 MPD
+# ============================================================================
+
+if command -v mpd &> /dev/null && [ -f "$HOME/.config/mpd/mpd.conf" ]; then
+    (
+        mkdir -p "$HOME/.local/share/mpd/playlists" "$HOME/Music" 2>/dev/null
+        mpd "$HOME/.config/mpd/mpd.conf" 2>/dev/null
+    ) &
+fi
+
+# ============================================================================
+# 启动 eww 状态栏（异步，不阻塞）
+# ============================================================================
+
+log "启动 eww 状态栏..."
+
+if command -v eww &> /dev/null; then
+    (
+        # 在子shell中运行，完全异步
+        killall -q eww 2>/dev/null
+        sleep 0.5
+        
+        # 清理锁文件
+        rm -f /tmp/eww_bar.lock 2>/dev/null
+        
+        # 启动 eww daemon（使用 timeout 防止卡死）
+        timeout 5 eww daemon 2>/dev/null || eww daemon 2>/dev/null &
+        sleep 1
+        
+        # 打开状态栏
+        if [ -f "$HOME/.config/eww/toggle_bar" ] && [ -x "$HOME/.config/eww/toggle_bar" ]; then
+            timeout 5 "$HOME/.config/eww/toggle_bar" 2>/dev/null || eww open bar 2>/dev/null &
+        else
+            eww open bar 2>/dev/null &
+        fi
+        
+        log "✓ eww 已启动"
+    ) &
+else
+    log "警告: eww 未安装"
+fi
+
+# ============================================================================
+# 完成
+# ============================================================================
+
+log "========================================="
+log "bspwm 配置完成"
+log "========================================="
+
+# 发送启动完成通知（异步）
+(
+    sleep 2
+    notify-send -t 3000 "MengXiOS Desktop Environment" "启动完成！" 2>/dev/null
+) &

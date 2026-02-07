@@ -1,0 +1,67 @@
+create:
+  - ~/Workspace
+
+link:
+  ./fish/:
+    path: ~/.config/fish
+    force: true
+
+  ./gitconfig/gitconfig: ~/.gitconfig
+
+  ~/Workspace/nvimrc/:
+    path: ~/.config/nvim
+    exist: false
+
+  ./starship/starship.toml: ~/.config/starship.toml
+
+  ./tmux/tmux.conf: ~/.tmux.conf
+
+  ./mini-vimrc/vimrc: ~/.vimrc
+
+  ./wezterm/: ~/.config/wezterm
+
+  ./kitty/: ~/.config/kitty
+
+  ./termux/:
+    path: ~/.termux
+    force: true
+    manual: true
+
+  ./keymapper/keymapper.conf: ~/.config/keymapper.conf
+
+  ./neofetch/config.conf:
+    path: ~/.config/neofetch/config.conf
+    force: true
+
+  ./bspwm/: ~/.config/bspwm
+
+  ./picom/: ~/.config/picom
+
+  ./polybar/: ~/.config/polybar
+
+  ./sxhkd/: ~/.config/sxhkd
+
+  ./dunst/: ~/.config/dunst
+
+  ./rofi/: ~/.config/rofi
+
+  ./xinitrc: ~/.xinitrc
+
+  ./fonts/: ~/.local/share/fonts
+
+  ./mpd/: ~/.config/mpd
+  ./ncmpcpp/: ~/.config/ncmpcpp
+
+  ./feh/: ~/.config/feh
+
+  ./imv/: ~/.config/imv
+
+  ./eww/: ~/.config/eww
+
+  ./stalonetray/stalonetrayrc: ~/.config/stalonetrayrc
+
+  ./yt-dlp/yt-dlp.conf: ~/.config/yt-dlp/config
+
+  ./gromoit-mpx/gromit-mpx.cfg: ~/.config/gromit-mpx.cfg
+
+  ./mpv/: ~/.config/mpv

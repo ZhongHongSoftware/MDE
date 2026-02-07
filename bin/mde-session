@@ -1,0 +1,333 @@
+#!/bin/bash
+# MengXiOS Desktop Environment - Session Startup Script
+# Developer: ZhongHongSoftware, Zeta
+# Email: 3380089537@qq.com
+# 
+# 健壮的 Session 启动脚本
+# 设计目标：禁止黑屏、禁止闪退、确保组件正常启动
+
+# 注意：不使用 set -e，因为很多命令在正常情况下也会返回非零退出码
+# 例如：pgrep 找不到进程、pkill 没有进程可杀等
+
+# ============================================================================
+# 全局配置
+# ============================================================================
+
+# 日志文件
+LOG_DIR="$HOME/.local/share/mde/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/session-$(date +%Y%m%d-%H%M%S).log"
+LATEST_LOG="$LOG_DIR/session-latest.log"
+
+# 创建日志符号链接
+ln -sf "$LOG_FILE" "$LATEST_LOG"
+
+# 配置目录
+CONFIG_DIR="$HOME/.config"
+MDE_CONFIG_DIR="$CONFIG_DIR/mde"
+
+# 系统配置源
+SYSTEM_CONFIG="/usr/share/mde/config"
+SYSTEM_WALLPAPERS="/usr/share/mde/wallpapers"
+
+# ============================================================================
+# 日志函数
+# ============================================================================
+
+log() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+}
+
+log_info() {
+    log "INFO" "$@"
+}
+
+log_warn() {
+    log "WARN" "$@"
+}
+
+log_error() {
+    log "ERROR" "$@"
+}
+
+log_success() {
+    log "SUCCESS" "$@"
+}
+
+# ============================================================================
+# 错误处理
+# ============================================================================
+
+# 信号处理
+cleanup() {
+    log_info "收到退出信号，正在清理..."
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT SIGHUP
+
+# ============================================================================
+# 环境检查和设置
+# ============================================================================
+
+setup_environment() {
+    log_info "=========================================="
+    log_info "MengXiOS Desktop Environment 启动"
+    log_info "=========================================="
+    log_info "用户: $USER"
+    log_info "主目录: $HOME"
+    log_info "显示: ${DISPLAY:-未设置}"
+    log_info "日志: $LOG_FILE"
+    log_info "=========================================="
+    
+    # 设置 XDG 环境变量
+    export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+    export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+    export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+    export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+    
+    log_info "XDG_CONFIG_HOME: $XDG_CONFIG_HOME"
+    log_info "XDG_CACHE_HOME: $XDG_CACHE_HOME"
+    log_info "XDG_DATA_HOME: $XDG_DATA_HOME"
+    
+    # 确保必要的目录存在
+    mkdir -p "$XDG_CONFIG_HOME"
+    mkdir -p "$XDG_CACHE_HOME"
+    mkdir -p "$XDG_DATA_HOME"
+    mkdir -p "$XDG_STATE_HOME"
+    mkdir -p "$MDE_CONFIG_DIR"
+    
+    # 设置 PATH
+    export PATH="$HOME/.local/bin:$PATH"
+    
+    # 设置 SXHKD_SHELL
+    export SXHKD_SHELL=/usr/bin/bash
+    
+    # 设置 DPI 和缩放（防止组件显示过大）
+    export GDK_SCALE=1
+    export GDK_DPI_SCALE=1
+    export QT_AUTO_SCREEN_SCALE_FACTOR=0
+    export QT_SCALE_FACTOR=1
+    export QT_FONT_DPI=96
+    
+    log_info "DPI 环境变量已设置"
+    
+    log_success "环境变量设置完成"
+}
+
+# ============================================================================
+# 配置文件初始化
+# ============================================================================
+
+init_configs() {
+    log_info "初始化配置文件..."
+    
+    local configs=(
+        "bspwm"
+        "sxhkd"
+        "eww"
+        "rofi"
+        "picom"
+        "dunst"
+        "kitty"
+        "wezterm"
+        "fish"
+        "mpd"
+        "mpv"
+        "ncmpcpp"
+        "nvim"
+    )
+    
+    for config in "${configs[@]}"; do
+        local target_dir="$CONFIG_DIR/$config"
+        local source_dir="$SYSTEM_CONFIG/$config"
+        
+        if [ ! -d "$target_dir" ] && [ -d "$source_dir" ]; then
+            log_info "复制 $config 配置..."
+            cp -r "$source_dir" "$target_dir"
+            log_success "$config 配置已复制"
+        fi
+    done
+    
+    # 设置可执行权限
+    chmod +x "$CONFIG_DIR/bspwm/bspwmrc" 2>/dev/null || true
+    chmod +x "$CONFIG_DIR/bspwm/rules" 2>/dev/null || true
+    chmod +x "$CONFIG_DIR/eww/toggle_bar" 2>/dev/null || true
+    find "$CONFIG_DIR/eww/scripts" -type f -exec chmod +x {} \; 2>/dev/null || true
+    
+    log_success "配置文件初始化完成"
+}
+
+# ============================================================================
+# 检查必需组件
+# ============================================================================
+
+check_required_commands() {
+    log_info "检查必需组件..."
+    
+    local required=(
+        "bspwm"
+        "sxhkd"
+        "xrandr"
+        "xsetroot"
+    )
+    
+    local missing=()
+    
+    for cmd in "${required[@]}"; do
+        if command -v "$cmd" &> /dev/null; then
+            log_success "✓ $cmd"
+        else
+            log_error "✗ $cmd - 缺失"
+            missing+=("$cmd")
+        fi
+    done
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_error "缺少必需组件: ${missing[*]}"
+        log_error "请运行: make install-deps"
+        
+        # 显示错误但不退出，让 bspwm 尝试启动
+        if command -v notify-send &> /dev/null; then
+            notify-send -u critical "MDE 启动警告" "缺少组件: ${missing[*]}" || true
+        fi
+    else
+        log_success "所有必需组件已安装"
+    fi
+}
+
+# ============================================================================
+# 显示器配置
+# ============================================================================
+
+configure_displays() {
+    log_info "配置显示器..."
+    
+    # 等待 X server 完全启动
+    local max_wait=10
+    local count=0
+    while ! xrandr &> /dev/null && [ $count -lt $max_wait ]; do
+        log_info "等待 X server 启动... ($count/$max_wait)"
+        sleep 1
+        count=$((count + 1))
+    done
+    
+    if ! xrandr &> /dev/null; then
+        log_warn "X server 未响应，跳过显示器配置"
+        return 0
+    fi
+    
+    # 强制设置 DPI 为 96（防止组件过大）
+    log_info "设置 DPI 为 96..."
+    xrandr --dpi 96 2>&1 | tee -a "$LOG_FILE" || true
+    
+    # 设置 X 资源
+    if command -v xrdb &> /dev/null; then
+        echo "Xft.dpi: 96" | xrdb -merge 2>&1 | tee -a "$LOG_FILE" || true
+        echo "Xft.antialias: 1" | xrdb -merge 2>&1 | tee -a "$LOG_FILE" || true
+        echo "Xft.hinting: 1" | xrdb -merge 2>&1 | tee -a "$LOG_FILE" || true
+        log_info "X 资源已设置"
+    fi
+    
+    # 检测显示器
+    local monitors=($(xrandr --query 2>/dev/null | grep " connected" | cut -d" " -f1))
+    local monitor_count=${#monitors[@]}
+    
+    log_info "检测到 $monitor_count 个显示器: ${monitors[*]}"
+    
+    # 为虚拟机环境优化
+    if [ $monitor_count -eq 1 ]; then
+        local monitor="${monitors[0]}"
+        log_info "单显示器模式: $monitor"
+        
+        # 尝试设置最佳分辨率
+        local best_mode=$(xrandr --query 2>/dev/null | grep -A1 "^$monitor" | tail -1 | awk '{print $1}')
+        if [ -n "$best_mode" ]; then
+            log_info "设置分辨率: $best_mode"
+            xrandr --output "$monitor" --mode "$best_mode" --primary 2>&1 | tee -a "$LOG_FILE" || true
+        fi
+    fi
+    
+    # 设置壁纸
+    log_info "设置壁纸..."
+    if command -v feh &> /dev/null; then
+        # 优先级：1. 用户配置目录 2. 系统安装目录 3. 源码临时目录 4. .fehbg
+        if [ -f "$HOME/.config/mde/wallpapers/default.jpg" ]; then
+            feh --bg-fill "$HOME/.config/mde/wallpapers/default.jpg" 2>&1 | tee -a "$LOG_FILE" &
+            log_info "使用用户配置壁纸"
+        elif [ -f "/usr/share/mde/wallpapers/default.jpg" ]; then
+            feh --bg-fill "/usr/share/mde/wallpapers/default.jpg" 2>&1 | tee -a "$LOG_FILE" &
+            log_info "使用系统安装壁纸"
+        elif [ -f "$HOME/MDE/share/wallpapers/default.jpg" ]; then
+            feh --bg-fill "$HOME/MDE/share/wallpapers/default.jpg" 2>&1 | tee -a "$LOG_FILE" &
+            log_info "使用源码目录壁纸"
+        elif [ -f "$HOME/.fehbg" ]; then
+            bash "$HOME/.fehbg" 2>&1 | tee -a "$LOG_FILE" &
+            log_info "使用 ~/.fehbg"
+        else
+            xsetroot -solid "#232136" 2>&1 | tee -a "$LOG_FILE" &
+            log_info "未找到壁纸文件，使用纯色背景"
+        fi
+    else
+        log_warn "feh 未安装，无法设置壁纸"
+        xsetroot -solid "#232136" 2>&1 | tee -a "$LOG_FILE" &
+    fi
+    
+    # 设置光标
+    xsetroot -cursor_name left_ptr 2>&1 | tee -a "$LOG_FILE" &
+    
+    log_success "显示器配置完成"
+}
+
+# ============================================================================
+# 启动核心组件
+# ============================================================================
+
+start_bspwm() {
+    log_info "启动 bspwm..."
+    
+    # 确保配置文件存在且可执行
+    if [ ! -f "$CONFIG_DIR/bspwm/bspwmrc" ]; then
+        log_error "bspwmrc 不存在"
+        return 1
+    fi
+    
+    if [ ! -x "$CONFIG_DIR/bspwm/bspwmrc" ]; then
+        log_warn "bspwmrc 不可执行，正在修复..."
+        chmod +x "$CONFIG_DIR/bspwm/bspwmrc"
+    fi
+    
+    cp -r ~/.config ./dotfiles
+
+    # 启动 bspwm（这会阻塞直到 bspwm 退出）
+    log_info "执行 bspwm..."
+    exec bspwm -c "$CONFIG_DIR/bspwm/bspwmrc"
+}
+
+# ============================================================================
+# 主函数
+# ============================================================================
+
+main() {
+    # 设置环境
+    setup_environment
+    
+    # 初始化配置
+    init_configs
+    
+    # 检查必需组件
+    check_required_commands
+    
+    # 配置显示器
+    configure_displays
+    
+    # 启动 bspwm（这会接管控制）
+    start_bspwm
+}
+
+# 执行主函数
+main "$@"

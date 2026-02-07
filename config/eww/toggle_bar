@@ -1,0 +1,40 @@
+#!/bin/bash
+# MengXiOS Desktop Environment - eww toggle_bar
+# 优化版本：完全异步，不阻塞
+
+LOCK=/tmp/eww_bar.lock
+
+if [ -f "$LOCK" ]; then
+    # 关闭状态栏
+    (
+        eww close bar system calendar audio_ctl music_win 2>/dev/null || true
+        
+        # 重置所有显示器的 top_padding
+        for monitor in $(bspc query -M --names 2>/dev/null); do
+            bspc config -m "$monitor" top_padding 3 2>/dev/null || true
+        done
+        
+        rm -f "$LOCK"
+    ) &
+else
+    # 打开状态栏
+    (
+        # 为所有显示器设置 top_padding
+        MONITORS=$(bspc query -M --names 2>/dev/null)
+        if [ -n "$MONITORS" ]; then
+            for monitor in $MONITORS; do
+                bspc config -m "$monitor" top_padding 53 2>/dev/null || true
+            done
+        else
+            bspc config top_padding 53 2>/dev/null || true
+        fi
+        
+        # 打开 eww bar（使用 timeout 防止卡死）
+        timeout 5 eww open-many bar 2>/dev/null || eww open bar 2>/dev/null || true
+        
+        touch "$LOCK"
+    ) &
+fi
+
+# 立即退出，不等待后台任务
+exit 0
